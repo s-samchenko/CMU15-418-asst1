@@ -119,11 +119,30 @@ typedef struct {
 void* workerThreadStart(void* threadArgs) {
 
     WorkerArgs* args = static_cast<WorkerArgs*>(threadArgs);
-
     // TODO: Implement worker thread here.
+    /* implementation with contiguous block: 1.8x speedup and doesn't scale with more threads.
+    int startRow = args->height / args->numThreads * (args->threadId );
+    int endRow = args->height / args->numThreads * (args->threadId + 1);
+    if (args->threadId == args->numThreads - 1) endRow = args->height;
+    mandelbrotSerial(args->x0, args->y0, args->x1, args->y1, args->width, args->height,
+                     startRow, endRow, args->maxIterations, args->output);
+    return NULL;
+     */
 
-    printf("Hello world from thread %d\n", args->threadId);
 
+    /* Interleaved implementation: Achieved 3.73x speedup using 4 threads.
+     * Machine is 4-core • 16GB RAM • 32GB;
+     * 2 threads resulted in 1.99x speedup which is exactly explained by Amdahl's bound.
+     * both 8 and 16 threads gave 3.53x and 3.56x which is slower than 4 threads
+     * due to machine's 4 cores limit.
+    */
+    double startTime = CycleTimer::currentSeconds();
+    for (unsigned int i = args->threadId; i < args->height; i += args->numThreads){
+        mandelbrotSerial(args->x0, args->y0, args->x1, args->y1, args->width, args->height,
+                         i, i+1, args->maxIterations, args->output);
+    }
+    double endTime = CycleTimer::currentSeconds();
+    //printf("Thread %d time: %.5f ms\n", args->threadId, (endTime - startTime) * 1000);
     return NULL;
 }
 
@@ -152,6 +171,15 @@ void mandelbrotThread(
     for (int i=0; i<numThreads; i++) {
         // TODO: Set thread arguments here.
         args[i].threadId = i;
+        args[i].x0 = x0;
+        args[i].y0 = y0;
+        args[i].x1 = x1;
+        args[i].y1 = y1;
+        args[i].width = width;
+        args[i].height = height;
+        args[i].numThreads = numThreads;
+        args[i].maxIterations = maxIterations;
+        args[i].output = output;
     }
 
     // Fire up the worker threads.  Note that numThreads-1 pthreads
