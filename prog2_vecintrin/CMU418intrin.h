@@ -1,5 +1,5 @@
 // Define vector unit width here
-#define VECTOR_WIDTH 8
+#define VECTOR_WIDTH 32
 
 #ifndef CMU418INTRIN_H_
 #define CMU418INTRIN_H_

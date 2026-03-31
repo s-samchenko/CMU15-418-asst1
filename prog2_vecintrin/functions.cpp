@@ -8,12 +8,12 @@ using namespace std;
 
 void absSerial(float* values, float* output, int N) {
     for (int i=0; i<N; i++) {
-	float x = values[i];
-	if (x < 0) {
-	    output[i] = -x;
-	} else {
-	    output[i] = x;
-	}
+        float x = values[i];
+        if (x < 0) {
+            output[i] = -x;
+        } else {
+            output[i] = x;
+        }
     }
 }
 
@@ -29,29 +29,29 @@ void absVector(float* values, float* output, int N) {
     //  Why is that the case?
     for (int i=0; i<N; i+=VECTOR_WIDTH) {
 
-	// All ones
-	maskAll = _cmu418_init_ones();
+        // All ones
+        maskAll = _cmu418_init_ones();
 
-	// All zeros
-	maskIsNegative = _cmu418_init_ones(0);
+        // All zeros
+        maskIsNegative = _cmu418_init_ones(0);
 
-	// Load vector of values from contiguous memory addresses
-	_cmu418_vload_float(x, values+i, maskAll);               // x = values[i];
+        // Load vector of values from contiguous memory addresses
+        _cmu418_vload_float(x, values+i, maskAll);               // x = values[i];
 
-	// Set mask according to predicate
-	_cmu418_vlt_float(maskIsNegative, x, zero, maskAll);     // if (x < 0) {
+        // Set mask according to predicate
+        _cmu418_vlt_float(maskIsNegative, x, zero, maskAll);     // if (x < 0) {
 
-	// Execute instruction using mask ("if" clause)
-	_cmu418_vsub_float(result, zero, x, maskIsNegative);      //   output[i] = -x;
+        // Execute instruction using mask ("if" clause)
+        _cmu418_vsub_float(result, zero, x, maskIsNegative);      //   output[i] = -x;
 
-	// Inverse maskIsNegative to generate "else" mask
-	maskIsNotNegative = _cmu418_mask_not(maskIsNegative);     // } else {
+        // Inverse maskIsNegative to generate "else" mask
+        maskIsNotNegative = _cmu418_mask_not(maskIsNegative);     // } else {
 
-	// Execute instruction ("else" clause)
-	_cmu418_vload_float(result, values+i, maskIsNotNegative); //   output[i] = x; }
+        // Execute instruction ("else" clause)
+        _cmu418_vload_float(result, values+i, maskIsNotNegative); //   output[i] = x; }
 
-	// Write results back to memory
-	_cmu418_vstore_float(output+i, result, maskAll);
+        // Write results back to memory
+        _cmu418_vstore_float(output+i, result, maskAll);
     }
 }
 
@@ -62,34 +62,81 @@ void absVector(float* values, float* output, int N) {
 // to the log_2 of the exponent
 void clampedExpSerial(float* values, int* exponents, float* output, int N) {
     for (int i=0; i<N; i++) {
-	float x = values[i];
-	float result = 1.f;
-	int y = exponents[i];
-	float xpower = x;
-	while (y > 0) {
-	    if (y & 0x1) {
-			result *= xpower;
-		}
-	    xpower = xpower * xpower;
-	    y >>= 1;
-	}
-	if (result > 4.18f) {
-	    result = 4.18f;
-	}
-	output[i] = result;
+        float x = values[i];
+        float result = 1.f;
+        int y = exponents[i];
+        float xpower = x;
+        while (y > 0) {
+            if (y & 0x1) {
+                result *= xpower;
+            }
+            xpower = xpower * xpower;
+            y >>= 1;
+        }
+        if (result > 4.18f) {
+            result = 4.18f;
+        }
+        output[i] = result;
     }
+}
+
+// returns a vector clamped to a value
+inline void minEq(__cmu418_vec_float &result, __cmu418_vec_float &values, float clamp){
+    __cmu418_mask maskGreater = _cmu418_init_ones(0);
+    __cmu418_mask maskAll = _cmu418_init_ones();
+    __cmu418_vec_float clampVec = _cmu418_vset_float(clamp);
+    _cmu418_vgt_float(maskGreater, values, clampVec, maskAll);
+    _cmu418_vmove_float(result, clampVec, maskGreater);
 }
 
 void clampedExpVector(float* values, int* exponents, float* output, int N) {
     // Implement your vectorized version of clampedExpSerial here
-    //  ...
+    __cmu418_vec_float x;
+    __cmu418_vec_float result;
+    __cmu418_vec_int y;
+    __cmu418_vec_float xpower;
+    __cmu418_vec_float floatOnes;
+    __cmu418_vec_int intOnes;
+    __cmu418_vec_int intZeros;
+    __cmu418_mask maskAll, maskLoop, maskOdd;
+    float clamp = 4.18;
+    __cmu418_vec_int yBit;
+
+    for (int i=0; i<N; i+=VECTOR_WIDTH) {
+        maskAll = _cmu418_init_ones(); // all ones
+
+        // Load variables as vectors
+        _cmu418_vload_float(x, values+i, maskAll); // x = values[i];
+        _cmu418_vload_int(y, exponents+i, maskAll); // y = exponents[i]
+        _cmu418_vmove_float(xpower, x, maskAll); // xpower = x
+        floatOnes = _cmu418_vset_float(1.f);
+        intOnes = _cmu418_vset_int(1);
+        intZeros = _cmu418_vset_int(0);
+        result = floatOnes;
+
+        _cmu418_vgt_int(maskLoop, y, intZeros, maskAll); // non-zero mask
+
+        while (_cmu418_cntbits(maskLoop) > 0){
+            _cmu418_vbitand_int(yBit, y, intOnes, maskAll); // get ids that enter if condition
+            _cmu418_veq_int(maskOdd, yBit, intOnes, maskAll); // mask of the if cond
+            _cmu418_vmult_float(result, result, xpower, maskOdd);
+
+            _cmu418_vmult_float(xpower, xpower, xpower, maskAll); //xpower *= xpower;
+            _cmu418_vshiftright_int(y, y, intOnes, maskAll); // divide all y[i] by 2
+            _cmu418_vgt_int(maskLoop, y, intZeros, maskAll);
+        }
+        minEq(result, result, clamp);
+
+        // Write results back to memory
+        _cmu418_vstore_float(output+i, result, maskAll);
+    }
 }
 
 
 float arraySumSerial(float* values, int N) {
     float sum = 0;
     for (int i=0; i<N; i++) {
-	sum += values[i];
+        sum += values[i];
     }
 
     return sum;
@@ -99,6 +146,18 @@ float arraySumSerial(float* values, int N) {
 // Assume VECTOR_WIDTH is a power of 2
 float arraySumVector(float* values, int N) {
     // Implement your vectorized version here
-    //  ...
-	return 0.f;
+    __cmu418_vec_float sum = _cmu418_vset_float(0.f);
+    __cmu418_mask maskAll = _cmu418_init_ones();
+    __cmu418_vec_float x;
+
+    for (int i = 0; i < N; i += VECTOR_WIDTH) {
+        _cmu418_vload_float(x, values+i, maskAll);
+        _cmu418_vadd_float(sum, sum, x, maskAll);
+    }
+    for (int i = 0; i < __builtin_ctz(VECTOR_WIDTH); i++) {
+        _cmu418_interleave_float(sum, sum);
+        _cmu418_hadd_float(sum, sum);
+    }
+
+    return sum[0];
 }
